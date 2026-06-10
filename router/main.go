@@ -122,7 +122,7 @@ func redisPush(key, val string, maxLen int64) {
 }
 
 // Map perception class to exposure events
-func perceptionToEvents(class string, silenceDecision string) []string {
+func perceptionToEvents(class string) []string {
 	var events []string
 	switch class {
 	case "reveals_refusal":
@@ -139,12 +139,6 @@ func perceptionToEvents(class string, silenceDecision string) []string {
 	// silence broken by user (they spoke at all)
 	events = append(events, "silence_broken_by_you")
 
-	// k_deflects_successfully fires only when K SPOKE a deflecting question
-	// (state=control, output=SPEAK) — not when K stays silent.
-	// Silence is not deflection. Silence is the baseline.
-	if silenceDecision == "SPEAK" && class == "reveals_nothing" {
-		events = append(events, "k_deflects_successfully")
-	}
 	return events
 }
 
@@ -212,18 +206,11 @@ func processTurn(userInput string) string {
 		newState = redisGet("k:state:current", "indifference")
 	}
 	redisSet("k:state:current", newState)
+	// write state to file for the_unknown (Julia reads this)
+	os.WriteFile(filepath.Join(rootDir, "k_state.tmp"), []byte(newState), 0644)
 
-	// --- 4. Silence decision (Assembly) ---
-	lastDelta := strconv.FormatInt(time.Now().Unix(), 10)
-	silenceBin := filepath.Join(rootDir, "silence", "silence")
-	silenceDecision := runModule(silenceBin, exposureStr+" "+newState+" "+lastDelta)
-	if silenceDecision == "" {
-		silenceDecision = "SILENT"
-	}
-	redisSet("k:silence:decision", silenceDecision)
-
-	// --- 5. Exposure update (Haskell) ---
-	events := perceptionToEvents(perceptionClass, silenceDecision)
+	// --- 4. Exposure update (Haskell) — before silence so silence sees the new value ---
+	events := perceptionToEvents(perceptionClass)
 	exposureBin := filepath.Join(rootDir, "exposure", "exposure")
 	exposureInput := exposureStr + " " + strings.Join(events, " ")
 	newExposureStr := runModule(exposureBin, exposureInput)
@@ -231,6 +218,15 @@ func processTurn(userInput string) string {
 		newExposureStr = exposureStr
 	}
 	redisSet("k:exposure:score", newExposureStr)
+
+	// --- 5. Silence decision (Assembly) — uses updated exposure ---
+	lastDelta := strconv.FormatInt(time.Now().Unix(), 10)
+	silenceBin := filepath.Join(rootDir, "silence", "silence")
+	silenceDecision := runModule(silenceBin, newExposureStr+" "+newState+" "+lastDelta)
+	if silenceDecision == "" {
+		silenceDecision = "SILENT"
+	}
+	redisSet("k:silence:decision", silenceDecision)
 
 	// --- 6. Mirror update (Prolog) ---
 	plFile := filepath.Join(rootDir, "mirror", "mirror.pl")
