@@ -28,11 +28,7 @@ state_machine:
 # [Haskell] exposure
 exposure:
 	@echo "[building] exposure (Haskell)..."
-	@cd exposure && cabal build 2>&1 | tail -3
-	@# Also build a simple wrapper in place for the router to find
-	@cd exposure && cabal install --installdir=. --overwrite-policy=always 2>/dev/null || \
-		(cabal build && cp $$(cabal exec -- which exposure 2>/dev/null || \
-		find . -name "exposure" -type f -executable | head -1) exposure 2>/dev/null || true)
+	@cd exposure && ghc -O2 -o exposure Main.hs 2>&1 | grep -v "^Linking\|^\\[" || true
 	@echo "[ok] exposure"
 
 # [Asm] silence

@@ -86,12 +86,12 @@ main:
     test    eax, eax
     jz      .check_pragmatism
 
-    ; --- active_waiting: interlocutor hasn't left, K waits ---
+    ; --- active_waiting: interlocutor hasn't left — K notices. speaks. ---
     lea     rdi, [rel state_buf]
     lea     rsi, [rel str_active_waiting]
     call    strcmp
     test    eax, eax
-    jz      .wait
+    jz      .speak
 
     ; default: SILENT
     jmp     .silent

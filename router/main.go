@@ -139,8 +139,10 @@ func perceptionToEvents(class string, silenceDecision string) []string {
 	// silence broken by user (they spoke at all)
 	events = append(events, "silence_broken_by_you")
 
-	// K deflects successfully if silence decision was SILENT
-	if silenceDecision == "SILENT" {
+	// k_deflects_successfully fires only when K SPOKE a deflecting question
+	// (state=control, output=SPEAK) — not when K stays silent.
+	// Silence is not deflection. Silence is the baseline.
+	if silenceDecision == "SPEAK" && class == "reveals_nothing" {
 		events = append(events, "k_deflects_successfully")
 	}
 	return events
