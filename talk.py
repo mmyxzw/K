@@ -63,14 +63,17 @@ def main():
         router_proc = None
     else:
         try:
+            log_path = os.path.join(os.path.dirname(__file__), "k.log")
+            log_file = open(log_path, "w")
             router_proc = subprocess.Popen(
                 [ROUTER_BIN],
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
-                stderr=sys.stderr,
+                stderr=log_file,
                 bufsize=1,
                 text=True,
             )
+            time.sleep(0.3)  # wait for router to initialize
         except FileNotFoundError:
             print(f"{GREY}[k] router not found. run: make{RESET}")
             router_proc = None
