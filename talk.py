@@ -13,20 +13,17 @@ import signal
 
 ROUTER_BIN = os.path.join(os.path.dirname(__file__), "router", "k_router")
 
-# ANSI
-DIM    = "\033[2m"
-RESET  = "\033[0m"
-BOLD   = "\033[1m"
-GREY   = "\033[38;5;245m"
-WHITE  = "\033[38;5;255m"
+DIM   = "\033[2m"
+RESET = "\033[0m"
+BOLD  = "\033[1m"
+GREY  = "\033[38;5;245m"
+WHITE = "\033[38;5;255m"
 
 
 def print_k(text: str):
     if not text or not text.strip():
-        # K stayed silent
         print(f"{DIM}  .{RESET}")
         return
-    # K speaks — slowly, as if arriving
     print(f"\n{WHITE}K{RESET}  ", end="", flush=True)
     for char in text:
         print(char, end="", flush=True)
@@ -34,32 +31,9 @@ def print_k(text: str):
     print(f"\n{RESET}")
 
 
-def print_status(exposure: str, state: str):
-    try:
-        exp_val = float(exposure)
-        bar_len = 20
-        filled = int(exp_val * bar_len)
-        bar = "█" * filled + "░" * (bar_len - filled)
-        print(f"{DIM}  [{bar}] {exp_val:.2f}  {state}{RESET}", flush=True)
-    except (ValueError, TypeError):
-        pass
-
-
-def get_redis_state():
-    try:
-        import redis
-        r = redis.Redis(host="127.0.0.1", port=6379, decode_responses=True)
-        exposure = r.get("k:exposure:score") or "0.0"
-        state    = r.get("k:state:current") or "indifference"
-        return exposure, state
-    except Exception:
-        return "0.0", "indifference"
-
-
 def main():
     if not os.path.exists(ROUTER_BIN):
-        print(f"{GREY}[k] router not compiled. run: make{RESET}")
-        print(f"{GREY}[k] starting in direct mode...{RESET}\n")
+        print(f"{GREY}[k] router not compiled. run: make{RESET}\n")
         router_proc = None
     else:
         try:
@@ -73,9 +47,9 @@ def main():
                 bufsize=1,
                 text=True,
             )
-            time.sleep(0.3)  # wait for router to initialize
+            time.sleep(0.3)
         except FileNotFoundError:
-            print(f"{GREY}[k] router not found. run: make{RESET}")
+            print(f"{GREY}[k] router not found. run: make{RESET}\n")
             router_proc = None
 
     def cleanup(sig=None, frame=None):
@@ -97,10 +71,6 @@ def main():
             return
 
         if not user_input:
-            # silence offered by the interlocutor
-            exposure, state = get_redis_state()
-            if float(exposure) > 0.0:
-                print_status(exposure, state)
             continue
 
         if router_proc and router_proc.poll() is None:
@@ -109,13 +79,9 @@ def main():
                 router_proc.stdin.flush()
                 response = router_proc.stdout.readline().rstrip("\n")
                 print_k(response)
-                # Show state after K responds
-                exposure, state = get_redis_state()
-                print_status(exposure, state)
             except BrokenPipeError:
                 print(f"{DIM}  .{RESET}")
         else:
-            # Router not available — K stays silent
             print_k("")
 
 
