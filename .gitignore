@@ -25,8 +25,9 @@
 
 
 # Fortran module files
-*.mod
 *.smod
+# Note: *.mod excluded from ignore — Go .mod files must be tracked
+
 
 # Compiled Static libraries
 *.lai
@@ -48,8 +49,9 @@ build-*/
 CMakeFiles/
 CMakeCache.txt
 cmake_install.cmake
-Makefile
 install_manifest.txt
+# Note: do NOT ignore top-level Makefile (it is hand-written)
+perception/build/Makefile
 compile_commands.json
 
 # Temporary files
@@ -67,3 +69,34 @@ vcpkg_installed/
 # test output & cache
 Testing/
 .cache/
+
+# Rust build artifacts
+forgetting/target/
+*.rustc_info.json
+CACHEDIR.TAG
+
+# Haskell artifacts
+*.hi
+*.o
+exposure/dist-newstyle/
+
+# Go build artifacts
+state_machine/state_machine
+router/k_router
+k_router
+
+# Silence build artifacts
+silence/silence
+silence/silence.o
+
+# Perception build artifacts
+perception/build/
+
+# Compiled binaries (keep source)
+exposure/exposure
+
+# CMake at root
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+

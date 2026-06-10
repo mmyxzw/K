@@ -1,0 +1,12 @@
+[package]
+name    = "forgetting"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "forgetting"
+path = "src/main.rs"
+
+[dependencies]
+redis = { version = "0.24", features = ["tokio-comp"] }
+tokio = { version = "1", features = ["full"] }
