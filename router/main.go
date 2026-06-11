@@ -122,7 +122,7 @@ func redisPush(key, val string, maxLen int64) {
 }
 
 // Map perception class to exposure events
-func perceptionToEvents(class string) []string {
+func perceptionToEvents(class string, currentState string, silenceDecision string) []string {
 	var events []string
 	switch class {
 	case "reveals_refusal":
@@ -130,14 +130,18 @@ func perceptionToEvents(class string) []string {
 	case "reveals_mirror":
 		events = append(events, "question_returned")
 	case "reveals_search":
-		// persistence detected if they keep asking
 		turnCount, _ := strconv.Atoi(redisGet("k:turn:count", "0"))
 		if turnCount > 2 {
 			events = append(events, "persistence_detected")
 		}
 	}
-	// silence broken by user (they spoke at all)
 	events = append(events, "silence_broken_by_you")
+
+	// speaking from almost_love causes K to pull back slightly
+	// — being seen at that depth is not sustainable
+	if silenceDecision == "SPEAK" && currentState == "almost_love" {
+		events = append(events, "k_deflects_successfully")
+	}
 
 	return events
 }
@@ -210,14 +214,12 @@ func processTurn(userInput string) string {
 	os.WriteFile(filepath.Join(rootDir, "k_state.tmp"), []byte(newState), 0644)
 
 	// --- 4. Exposure update (Haskell) — before silence so silence sees the new value ---
-	events := perceptionToEvents(perceptionClass)
+	events := perceptionToEvents(perceptionClass, newState, "")
 	exposureBin := filepath.Join(rootDir, "exposure", "exposure")
-	exposureInput := exposureStr + " " + strings.Join(events, " ")
-	newExposureStr := runModule(exposureBin, exposureInput)
+	newExposureStr := runModule(exposureBin, exposureStr+" "+strings.Join(events, " "))
 	if newExposureStr == "" {
 		newExposureStr = exposureStr
 	}
-	redisSet("k:exposure:score", newExposureStr)
 
 	// --- 5. Silence decision (Assembly) — uses updated exposure ---
 	lastDelta := strconv.FormatInt(time.Now().Unix(), 10)
@@ -227,6 +229,15 @@ func processTurn(userInput string) string {
 		silenceDecision = "SILENT"
 	}
 	redisSet("k:silence:decision", silenceDecision)
+
+	// almost_love pullback: speaking from that depth causes K to retreat
+	if silenceDecision == "SPEAK" && newState == "almost_love" {
+		pulled := runModule(exposureBin, newExposureStr+" k_deflects_successfully")
+		if pulled != "" {
+			newExposureStr = pulled
+		}
+	}
+	redisSet("k:exposure:score", newExposureStr)
 
 	// --- 6. Mirror update (Prolog) ---
 	plFile := filepath.Join(rootDir, "mirror", "mirror.pl")
