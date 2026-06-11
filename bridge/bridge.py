@@ -14,7 +14,7 @@ import requests
 import random
 
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434")
-MODEL      = os.environ.get("K_MODEL", "mistral")
+MODEL      = os.environ.get("K_MODEL", "phi3:mini")
 
 STATE_TEMPERATURE = {
     "indifference":   0.4,
