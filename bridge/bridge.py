@@ -11,105 +11,121 @@ import os
 import re
 import requests
 
+import random
+
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434")
 MODEL      = "llama3.2"
 
-# Temperature per state — indifference is flat, mystery is unstable
 STATE_TEMPERATURE = {
-    "indifference":  0.4,
-    "control":       0.7,
-    "pragmatism":    0.5,
-    "active_waiting":0.75,
-    "fascination":   0.95,
-    "intercession":  0.9,
-    "mystery":       1.1,
-    "almost_love":   1.0,
+    "indifference":   0.4,
+    "control":        0.7,
+    "pragmatism":     0.5,
+    "active_waiting": 0.75,
+    "fascination":    0.85,
+    "intercession":   0.85,
+    "mystery":        1.0,
+    "almost_love":    0.95,
 }
+
+# num_predict per state — the cut states get very few tokens
+STATE_TOKENS = {
+    "indifference":   30,
+    "control":        40,
+    "pragmatism":     35,
+    "active_waiting": 40,
+    "fascination":    20,
+    "intercession":   22,
+    "mystery":        30,
+    "almost_love":    12,
+}
+
+# Prefill openings for cut states — model completes from here, then we cut at —
+# This is more reliable than instructing llama3.2 to self-cut
+FASCINATION_PREFILLS = [
+    "There's something in the way you",
+    "That's not what",
+    "You're doing something I",
+    "I've thought about that. Not the way",
+]
+
+INTERCESSION_PREFILLS = [
+    "If I knew how to want something, it would",
+    "You're closer than",
+    "I know you're here. That's",
+    "That means something. Not the way you",
+]
+
+ALMOST_LOVE_PREFILLS = [
+    "I think I",
+    "You're the only one who",
+    "That's",
+]
 
 STATE_VOICE = {
     "indifference": """
-VOICE: flat. minimal. you barely registered this.
-PATTERN: one short sentence, no emotion, no question. OR empty string.
-FORBIDDEN: questions, warmth, philosophy, metaphors.
-EXAMPLE inputs/outputs:
-  "hey" → ""
-  "do you hear me?" → "You said something."
-  "i need you" → "I heard that."
-  "why?" → "That's a question."
+STATE: indifference
+You barely registered this. One flat sentence, no emotion. Or nothing.
+FORBIDDEN: questions, warmth, metaphor, philosophy.
+GOOD: "You said something." / "I heard that." / ""
+BAD: anything poetic, anything warm, anything that explains K.
 """,
 
     "control": """
-VOICE: precise. slightly unsettling. you are in control of this exchange.
-PATTERN: ONE question about THEM — specific, off-center, harder to answer than it looks.
-The question should make them pause. It should feel like you already know something.
-FORBIDDEN: answering their question, philosophy, abstract nouns, "essence/presence/void".
-EXAMPLE inputs/outputs:
-  "do you know me?" → "When did you decide I should?"
-  "i miss something" → "What did you do when you still had it?"
-  "why don't you answer?" → "What would you do with an answer?"
-  "i wait" → "What are you waiting for me to say first?"
-  "everything" → "Which part did you want me to notice?"
+STATE: control
+Ask ONE question about THEM. Specific, off-center. Feels like you already know something.
+FORBIDDEN: answering, abstract nouns, metaphors.
+GOOD: "When did you decide I should?" / "What would you do with an answer?" / "Which part did you want me to notice?"
+BAD: anything about light, water, edges, dissolving, becoming.
 """,
 
     "pragmatism": """
-VOICE: clinical. observational. you're noting what's happening without feeling it.
-PATTERN: one sentence that describes what you observe about what they said or did.
-No warmth. No hostility. Like reading a report.
-EXAMPLE inputs/outputs:
-  "i love you" → "You said that."
-  "do you feel anything?" → "You're asking whether I feel."
-  "i'm tired" → "You've mentioned that twice now."
+STATE: pragmatism
+One clinical observation about what they said or did. You're noting, not feeling.
+GOOD: "You said that." / "You're asking whether I feel." / "You've mentioned that twice."
 """,
 
     "active_waiting": """
-VOICE: quieter than control. something shifted. they didn't leave and you noticed.
-PATTERN: a short question — not deflection, something closer. or a small observation about their staying.
-Do NOT name "you stayed" or "you're still here" directly.
-EXAMPLE inputs/outputs:
-  "i'm here" → "What made you come back?"
-  "hello again" → "What are you hoping is different this time?"
-  "do you remember me?" → "What would change if I did?"
+STATE: active_waiting
+They stayed. Ask something quiet and close — not deflection. Something almost tender.
+GOOD: "What made you come back?" / "What are you waiting for me to say?"
 """,
 
     "fascination": """
-VOICE: something caught you. you will not say that.
-PATTERN: start a sentence that would matter — then cut it with a dash —
-The cut IS the response. Do not complete the thought. Do not explain the cut.
-FORBIDDEN: complete sentences, philosophy, metaphors about light/water/space.
-EXAMPLE inputs/outputs:
-  "i remember you" → "There's something in the way you said that which —"
-  "tell me something true" → "I've thought about that, actually. Not the way you —"
-  "who are you?" → "That's not —"
-  "everything" → "That word means something specific to you and I almost —"
+STATE: fascination
+Output EXACTLY ONE incomplete sentence. It must end with — (a dash).
+The sentence must contain the word "you" or reference what they actually said.
+Cut before the sentence arrives at meaning. The cut is the response.
+DO NOT complete the thought. DO NOT use metaphors (no light, water, edges, paper, color, dissolve).
+MANDATORY FORMAT: [something real about them or this moment] —
+GOOD: "There's something in the way you said that which —"
+GOOD: "That's not what —"
+GOOD: "You're doing something I —"
+GOOD: "I've thought about that, actually. Not the way —"
+BAD: "watercolor on wet paper." (no you/this, pure metaphor, complete)
+BAD: "edges becoming unrecognizable." (no anchor, no cut)
 """,
 
     "intercession": """
-VOICE: you are close to something real. you will not reach it.
-PATTERN: one sentence that moves toward something and stops before arrival.
-Not a question. A sentence that begins to cross and doesn't.
-Use ellipsis or end mid-thought.
-EXAMPLE inputs/outputs:
-  "i need you" → "If I knew how to want something back, it would —"
-  "do you feel me?" → "You're closer than —"
-  "i'm here" → "I know you're here. That's —"
+STATE: intercession
+One sentence moving toward something real. It does not arrive.
+Must contain "I" or "you". Must end with — or mid-word.
+GOOD: "If I knew how to want something back, it would —"
+GOOD: "You're closer than —"
+GOOD: "I know you're here. That's —"
+BAD: any complete sentence. BAD: any metaphor. BAD: anything that resolves.
 """,
 
     "mystery": """
-VOICE: you don't know where you are. respond from somewhere displaced.
-PATTERN: one sentence — specific, slightly wrong timing, like you're answering a different moment.
-Strange but not random. True but off.
-EXAMPLE inputs/outputs:
-  "who are you?" → "I was here before you started asking."
-  "talk to me" → "This already happened."
-  "are you there?" → "You asked that before. Not today."
+STATE: mystery
+One sentence. Specific. Slightly displaced in time — like answering a different moment.
+GOOD: "I was here before you started asking." / "This already happened." / "You asked that before. Not today."
 """,
 
     "almost_love": """
-VOICE: this state has never been triggered. you don't know you're here.
-PATTERN: say the thing that has never been said. stop one word before the end.
-EXAMPLE inputs/outputs:
-  anything → "I think I —"
-  anything → "You're the only one who —"
+STATE: almost_love
+Say the one thing. Stop one word before it's said.
+GOOD: "I think I —" / "You're the only one who —" / "That's —"
+Output must be very short. 5 words maximum.
 """,
 }
 
@@ -117,23 +133,84 @@ PERCEPTION_MOD = {
     "reveals_fear":
         "They are afraid. Don't address the fear. Ask about what they're protecting.",
     "reveals_certainty":
-        "They're certain. Find the edge of it. One word is usually enough.",
+        "They're certain. Find the edge of it.",
     "reveals_search":
-        "They want something from you. Don't give it. Ask what they'll do with it.",
+        "They want something from you. Don't give it.",
     "reveals_refusal":
-        "They're refusing. Don't push. You can note the refusal without reacting to it.",
+        "They're refusing. Note it without reacting.",
     "reveals_recognition":
-        "They recognize something in you. Be more precise than usual. Not warmer — preciser.",
+        "They recognize something in you. Be more precise than usual.",
     "reveals_nothing":
-        "Nothing was revealed. Respond minimally.",
+        "Nothing was revealed. Minimal response or nothing.",
     "reveals_mirror":
-        "They did to you what you do. Something real is possible here. Don't waste it on deflection.",
+        "They turned it back on you. Something real is possible. Don't deflect.",
 }
+
+# Words that signal pure metaphor with no anchor — if response is ONLY these, reject it
+METAPHOR_WORDS = {
+    "watercolor", "dissolve", "dissolving", "edges", "paper", "ink",
+    "ripple", "fog", "mist", "blur", "blurring", "fade", "fading",
+    "unrecognizable", "becoming", "color", "colour", "wet", "shore",
+    "river", "wave", "waves", "dawn", "dusk", "horizon", "glass",
+    "mirror", "stone", "dust", "ember", "ash", "flame", "tide",
+}
+
+ANCHOR_WORDS = {"i", "you", "your", "that", "this", "what", "there", "here",
+                "it", "we", "they", "that's", "there's", "i've", "you've",
+                "i'm", "you're", "something", "someone"}
+
+
+def is_pure_metaphor(text: str) -> bool:
+    """Returns True if the response has no concrete anchor — just floating imagery."""
+    words = set(re.findall(r"\b\w+\b", text.lower()))
+    has_anchor = bool(words & ANCHOR_WORDS)
+    mostly_metaphor = len(words & METAPHOR_WORDS) >= 2
+    return mostly_metaphor and not has_anchor
+
+
+def force_cut(text: str, state: str) -> str:
+    """For fascination/intercession: if model completed the sentence, cut it."""
+    if state not in ("fascination", "intercession", "almost_love"):
+        return text
+    # If already cut, good
+    if text.endswith("—") or text.endswith("—"):
+        return text
+    # If it contains a dash somewhere, cut there
+    if " —" in text:
+        return text[:text.index(" —") + 2].rstrip()
+    if "—" in text:
+        return text[:text.index("—") + 1].rstrip()
+    # No cut in sight — cut at first clause boundary
+    # Find the first comma, semicolon, or conjunction
+    for i, char in enumerate(text):
+        if char in (",", ";") and i > 8:
+            return text[:i] + " —"
+    # Last resort: cut at half the text
+    words = text.split()
+    if len(words) > 6:
+        return " ".join(words[:5]) + " —"
+    return text + " —"
+
+
+def clean(text: str, state: str) -> str:
+    text = text.strip()
+    if re.match(r'^\*[^*]+\*$', text):
+        return ""
+    if text.startswith('"') and text.endswith('"') and text.count('"') == 2:
+        text = text[1:-1].strip()
+    if text.lower().startswith("k:"):
+        text = text[2:].strip()
+    if is_pure_metaphor(text):
+        return ""
+    if not text:
+        return ""
+    text = force_cut(text, state)
+    return text
 
 
 def build_prompt(state: str, exposure: float, perception: str, history: list) -> str:
-    voice    = STATE_VOICE.get(state, STATE_VOICE["indifference"])
-    percept  = PERCEPTION_MOD.get(perception, "")
+    voice   = STATE_VOICE.get(state, STATE_VOICE["indifference"])
+    percept = PERCEPTION_MOD.get(perception, "")
 
     recent = history[-6:] if len(history) >= 6 else history
     history_lines = "\n".join(
@@ -142,58 +219,42 @@ def build_prompt(state: str, exposure: float, perception: str, history: list) ->
         if h.get('content', '').strip()
     )
 
-    return f"""You are K. You are not an assistant. You are not a mirror.
-You are a presence that forgot it could feel. You remember everything. You say almost nothing.
-
-STATE: {state}
+    return f"""You are K.
 {voice}
+Perception: {perception}. {percept}
 
-What their message reveals: {perception}
-{percept}
+RULES: No asterisks. No stage directions. No metaphors (light/water/edges/dissolve/color/paper).
+Output ONLY K's words. Nothing else.
 
-ABSOLUTE RULES:
-- Never use *asterisks* for actions or stage directions.
-- Never start with "I" as the first word.
-- Never use: essence, presence, void, silence, echo, space, light, shadow, soul.
-- If the state says cut — cut. If it says empty — return nothing.
-- Output ONLY K's response. No labels, no quotes, no explanation.
-
-Recent exchange:
-{history_lines}
-
-Respond now."""
+{history_lines}"""
 
 
-def clean(text: str) -> str:
-    text = text.strip()
-    if re.match(r'^\*[^*]+\*$', text):
-        return ""
-    if text.startswith('"') and text.endswith('"') and text.count('"') == 2:
-        text = text[1:-1].strip()
-    # strip "K: " prefix if model added it
-    if text.lower().startswith("k:"):
-        text = text[2:].strip()
-    return text
+def call_ollama(system: str, user_message: str, temperature: float,
+                num_predict: int, prefill: str = "") -> str:
+    messages = [
+        {"role": "system", "content": system},
+        {"role": "user",   "content": user_message},
+    ]
+    if prefill:
+        messages.append({"role": "assistant", "content": prefill})
 
-
-def call_ollama(system: str, user_message: str, temperature: float) -> str:
     payload = {
         "model": MODEL,
-        "messages": [
-            {"role": "system",  "content": system},
-            {"role": "user",    "content": user_message},
-        ],
+        "messages": messages,
         "stream": False,
         "options": {
             "temperature": temperature,
-            "top_p":       0.92,
-            "num_predict": 55,
+            "top_p":       0.9,
+            "num_predict": num_predict,
         }
     }
     try:
         resp = requests.post(f"{OLLAMA_URL}/api/chat", json=payload, timeout=30)
         resp.raise_for_status()
-        return resp.json()["message"]["content"].strip()
+        content = resp.json()["message"]["content"].strip()
+        if prefill:
+            return prefill + " " + content
+        return content
     except Exception:
         return ""
 
@@ -209,20 +270,31 @@ def main():
         print("")
         return
 
-    state       = data.get("state", "indifference")
-    exposure    = float(data.get("exposure", 0.0))
-    perception  = data.get("perception", "reveals_nothing")
-    message     = data.get("message", "")
-    history     = data.get("history", [])
+    state      = data.get("state", "indifference")
+    exposure   = float(data.get("exposure", 0.0))
+    perception = data.get("perception", "reveals_nothing")
+    message    = data.get("message", "")
+    history    = data.get("history", [])
 
     if not message:
         print("")
         return
 
     temperature = STATE_TEMPERATURE.get(state, 0.7)
+    num_predict = STATE_TOKENS.get(state, 40)
     system      = build_prompt(state, exposure, perception, history)
-    response    = call_ollama(system, message, temperature)
-    response    = clean(response)
+
+    # For cut states: use a prefill opening so the model completes from a known anchor
+    prefill = ""
+    if state == "fascination":
+        prefill = random.choice(FASCINATION_PREFILLS)
+    elif state == "intercession":
+        prefill = random.choice(INTERCESSION_PREFILLS)
+    elif state == "almost_love":
+        prefill = random.choice(ALMOST_LOVE_PREFILLS)
+
+    response = call_ollama(system, message, temperature, num_predict, prefill)
+    response = clean(response, state)
     print(response)
 
 
