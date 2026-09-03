@@ -1,0 +1,2 @@
+[deps]
+# the_unknown uses only Julia stdlib: Sockets, Dates
